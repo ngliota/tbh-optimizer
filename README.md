@@ -84,6 +84,59 @@ frontend/index.html    # single-page dashboard (Chart.js)
 data/                  # snapshots, catalog cache, prices.json, build_targets.json, caches
 ```
 
+## Algorithm
+
+### Drop mechanic model
+Taskbar Hero chest drops are **interval-gated**, not clear-count-gated. The mechanic:
+
+1. A drop **opportunity** opens on a fixed cadence every `drop_interval` seconds.
+2. The opportunity stays catchable for `drop_window` seconds.
+3. You **catch** it by completing a stage clear while the window is open.
+4. On a catch, you roll success with probability `p` (diminishing returns above a reference rate).
+
+This explains why drop-rate runes have low value — the interval hard-caps chest frequency regardless of how high your rate is.
+
+### Simulator (Monte-Carlo)
+Runs `trials` (default 100) independent 1-hour simulations per `(clear_time, drop_rate)` cell:
+
+```
+p = base_catch + (1 - base_catch) × (1 - 1 / (1 + 0.6 × extra))
+    where extra = max(rate_pct - ref_rate, 0) / ref_rate
+```
+
+- At `ref_rate` (500%) → `p = base_catch` (0.92)
+- Above `ref_rate` → `p` closes toward 1.0 with square-root falloff (diminishing returns)
+- Each clear has ±10% gaussian jitter on duration
+
+The simulation advances a clock by `clear_time` per step, checks whether the clear lands inside the current open window, catches at most once per opportunity, and counts successes over 3600 s.
+
+Default parameters (override with Drop Test measurements):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `drop_interval` | 430 s | Seconds between opportunities (~8.4/hr cap) |
+| `drop_window` | 110 s | How long an opportunity stays catchable |
+| `base_catch` | 0.92 | Base success prob at ref_rate |
+| `ref_rate` | 500% | Drop rate at which base_catch applies |
+
+### Optimizer
+Ranks stages by income per hour under the same interval model:
+
+```
+clears_per_hr   = 3600 / clear_time
+chests_per_hr   = min(3600 / drop_interval, clears_per_hr)   ← interval caps it
+
+gold_per_hr     = (goldPerClear + boss_bonus) × clears_per_hr
+exp_per_hr      = (expPerClear  + boss_bonus) × clears_per_hr
+chest_value/hr  = stage_tier × chests_per_hr                  ← proxy until loot-table join
+```
+
+Boss bonuses (`gold_stage_boss`, `gold_act_boss`, etc.) come from your manually-entered **My Stats** tab and are added per clear when present.
+
+**Rotation advice** depends on whether the drop cooldown is shared or independent across stages (measured in the Drop Test):
+- **Shared** — sit on the single best stage; rotation does not help.
+- **Independent** — rotate across the top-N stages to run parallel timers simultaneously.
+
 ## Notes / current limitations
 - The Records log is **not** written to disk and **not** in the save — drop events are reconstructed
   by diffing snapshots. Exact per-round *clear times* would need optional OCR (not built; clear time

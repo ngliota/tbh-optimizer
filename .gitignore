@@ -1,0 +1,32 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Logs
+*.log
+
+# Data files that shouldn't be committed
+data/password_cache.json
+data/my_stats.json
+data/snapshots/
+
+# Build artifacts
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db

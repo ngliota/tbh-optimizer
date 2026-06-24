@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TBH Optimizer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { --bg:#11141a; --panel:#1a1f2b; --line:#2a3142; --txt:#e6e9ef; --mut:#8b95a7;
+          --accent:#5db0ff; --good:#57d9a3; --warn:#ffb454; --bad:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex;
+           align-items:center; gap:16px; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.5px; }
+  #status { font-size:12px; color:var(--mut); margin-left:auto; }
+  .tabs { display:flex; gap:4px; padding:10px 20px 0; }
+  .tab { padding:8px 16px; border:1px solid var(--line); border-bottom:none;
+         border-radius:8px 8px 0 0; cursor:pointer; color:var(--mut); background:var(--panel); }
+  .tab.active { color:var(--txt); background:var(--bg); border-color:var(--accent); }
+  main { padding:20px; }
+  .view { display:none; }
+  .view.active { display:block; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card .k { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.4px; }
+  .card .v { font-size:22px; font-weight:600; margin-top:4px; }
+  .prov { font-size:11px; color:var(--mut); font-style:italic; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+           padding:16px; margin-top:16px; }
+  .panel h3 { margin:0 0 12px; font-size:13px; color:var(--mut); text-transform:uppercase; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); }
+  th:first-child,td:first-child { text-align:left; }
+  .controls { display:flex; flex-wrap:wrap; gap:14px; align-items:end; margin-bottom:14px; }
+  .controls label { display:flex; flex-direction:column; font-size:12px; color:var(--mut); gap:4px; }
+  .controls input { width:90px; background:var(--bg); border:1px solid var(--line);
+                    color:var(--txt); padding:6px; border-radius:6px; }
+  button { background:var(--accent); color:#08121f; border:none; padding:8px 16px;
+           border-radius:6px; font-weight:600; cursor:pointer; }
+  .pos { color:var(--good); } .neg { color:var(--bad); }
+  canvas { max-height:340px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TBH OPTIMIZER</h1>
+  <span class="prov">passive · read-only · localhost</span>
+  <span id="status">connecting…</span>
+</header>
+<div class="tabs">
+  <div class="tab active" data-view="live">LIVE</div>
+  <div class="tab" data-view="droptest">DROP TEST</div>
+  <div class="tab" data-view="sim">SIMULATOR</div>
+  <div class="tab" data-view="opt">OPTIMIZER</div>
+  <div class="tab" data-view="advisor">BUILD ADVISOR</div>
+  <div class="tab" data-view="stats">MY STATS</div>
+</div>
+<main>
+  <!-- LIVE -->
+  <section class="view active" id="live">
+    <div class="cards" id="liveCards"></div>
+    <div class="panel"><h3>Gold over time <span class="prov">save (live)</span></h3>
+      <canvas id="goldChart"></canvas></div>
+    <div class="panel"><h3>Total Hero EXP over time <span class="prov">save (live)</span></h3>
+      <canvas id="expChart"></canvas></div>
+  </section>
+
+  <!-- DROP TEST -->
+  <section class="view" id="droptest">
+    <div class="cards" id="dropCards"></div>
+    <div class="panel"><h3>Recent change events <span class="prov">save-diff (observed)</span></h3>
+      <table id="eventTable"><thead><tr><th>time</th><th>Δgold</th><th>items+</th>
+        <th>Δbox</th><th>changed counters</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- SIMULATOR -->
+  <section class="view" id="sim">
+    <div class="panel">
+      <h3>Drop Simulation (1 hour × 100 trials)
+        <span class="prov">model — override interval/window with Drop Test measurements</span></h3>
+      <div class="controls">
+        <label>drop_interval (s)<input id="p_interval" type="number" value="430"></label>
+        <label>drop_window (s)<input id="p_window" type="number" value="110"></label>
+        <label>base_catch<input id="p_catch" type="number" step="0.01" value="0.92"></label>
+        <label>clear_jitter<input id="p_jitter" type="number" step="0.01" value="0.10"></label>
+        <button id="runSim">Run simulation</button>
+      </div>
+      <canvas id="simChart"></canvas>
+      <div id="simContext" class="prov" style="margin-top:10px"></div>
+    </div>
+    <div class="panel"><h3>Table</h3>
+      <table id="simTable"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <!-- OPTIMIZER -->
+  <section class="view" id="opt">
+    <div class="panel">
+      <h3>Farm Optimizer <span class="prov">interval-gated · value-per-chest is the lever</span></h3>
+      <div class="controls">
+        <label>goal<select id="o_goal" style="background:var(--bg);color:var(--txt);border:1px solid var(--line);padding:6px;border-radius:6px">
+          <option value="gold">max gold/hr</option><option value="exp">max EXP/hr</option>
+          <option value="chest_value">max chest value/hr</option></select></label>
+        <label>drop_interval (s)<input id="o_interval" type="number" value="430"></label>
+        <label>clear_time (s)<input id="o_clear" type="number" value="90"></label>
+        <button id="runOpt">Rank stages</button>
+      </div>
+      <div id="optBest" class="card" style="margin-bottom:12px;border-color:var(--good)"></div>
+      <div id="optNotes" class="prov" style="margin-bottom:10px"></div>
+      <div id="optRotation" class="card" style="margin-bottom:12px"></div>
+      <table id="optTable"><thead><tr><th>stage</th><th>diff</th><th>gold/hr</th><th>exp/hr</th>
+        <th>chests/hr</th><th>act boss</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- BUILD ADVISOR -->
+  <section class="view" id="advisor">
+    <div class="panel">
+      <h3>Build Advisor <span class="prov">equipped: save (live) · grades: wiki · targets: editable assumption</span></h3>
+      <div class="controls" style="margin-bottom:8px">
+        <button id="advFetch">⟳ Fetch current build</button>
+        <button id="advSetTarget" style="background:var(--good)">Set targets = my current build</button>
+        <button id="advReset" style="background:var(--warn)">Reset targets</button>
+      </div>
+      <div id="advisorBody"></div>
+    </div>
+  </section>
+
+  <!-- MY STATS -->
+  <section class="view" id="stats">
+    <div class="panel">
+      <h3>My Stat List <span class="prov">manual — typed from the in-game Stat List</span></h3>
+      <div class="prov" style="margin-bottom:12px" id="statsNote"></div>
+      <div id="statsForm" class="controls" style="gap:18px"></div>
+      <button id="statsSave">Save stats</button>
+      <span id="statsSaved" class="prov" style="margin-left:10px"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = n => n==null ? "—" : n.toLocaleString();
+const RATE_COLORS = ["#5db0ff","#ffb454","#57d9a3","#ff6b6b","#b58bff","#9aa0ad"];
+
+// ---- tab switching ----
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active"); $("#"+t.dataset.view).classList.add("active");
+  if (t.dataset.view==="sim" && !simChart) runSim();
+  if (t.dataset.view==="opt") runOpt();
+  if (t.dataset.view==="advisor") loadAdvisor();
+  if (t.dataset.view==="stats") loadStats();
+});
+
+// ---- MY STATS ----
+async function loadStats(){
+  const d = await (await fetch("/api/stats")).json();
+  $("#statsNote").textContent = d.note;
+  $("#statsForm").innerHTML = Object.entries(d.fields).map(([k,label])=>
+    `<label>${label}<input data-stat="${k}" type="number" step="any" value="${d.values[k]??""}"></label>`
+  ).join("");
+}
+$("#statsSave").onclick = async ()=>{
+  const values = {};
+  document.querySelectorAll('#statsForm input[data-stat]').forEach(i=>{
+    if(i.value!=="") values[i.dataset.stat] = i.value;
+  });
+  await fetch("/api/stats",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({values})});
+  $("#statsSaved").textContent = "saved ✓ — re-rank in the Optimizer to apply";
+  setTimeout(()=>$("#statsSaved").textContent="",4000);
+};
+
+// ---- OPTIMIZER ----
+const GOAL_LABEL = {gold:"gold/hr", exp:"EXP/hr", chest_value:"chest value/hr"};
+async function runOpt(){
+  const q = new URLSearchParams({goal:$("#o_goal").value,
+    drop_interval:$("#o_interval").value, clear_time:$("#o_clear").value});
+  const d = await (await fetch("/api/optimizer?"+q)).json();
+  if(d.best){
+    const metricKey = {gold:"gold_per_hr",exp:"exp_per_hr",chest_value:"chest_value_per_hr"}[d.goal];
+    $("#optBest").innerHTML = `<div class="k">Best for you (highest ${GOAL_LABEL[d.goal]} you can clear)</div>
+      <div style="font-size:18px;font-weight:600;margin-top:4px">${d.best.label}</div>
+      <div class="prov" style="margin-top:4px">${(d.best[metricKey]||0).toLocaleString()} ${GOAL_LABEL[d.goal]}
+        · ${d.best.chests_per_hr} chests/hr · cleared up to ${d.max_completed_stage??"?"}
+        ${d.uses_stats?"· includes your Stat List bonuses":""}</div>`;
+  } else $("#optBest").innerHTML = "";
+  $("#optNotes").innerHTML = d.notes.map(n=>"• "+n).join("<br>");
+  $("#optRotation").innerHTML = `<div class="k">Rotation (${d.rotation.verdict})</div>
+    <div style="font-size:13px;margin-top:4px">${d.rotation.advice}</div>`;
+  $("#optTable tbody").innerHTML = d.ranking.map((r,i)=>`<tr${i===0?' style="background:#1e2a22"':''}>
+    <td>${r.name||r.key}</td><td><span class="prov">${r.difficulty||""}</span></td>
+    <td>${(r.gold_per_hr||0).toLocaleString()}</td>
+    <td>${(r.exp_per_hr||0).toLocaleString()}</td><td>${r.chests_per_hr}</td>
+    <td>${r.boss?"★":""}</td></tr>`).join("");
+}
+$("#runOpt").onclick = runOpt;
+
+// ---- ADVISOR ----
+function renderAdvisor(d){
+  if(d.error){ $("#advisorBody").innerHTML = `<span class="prov">${d.error}</span>`; return; }
+  $("#advisorBody").innerHTML = `<div class="prov" style="margin-bottom:10px">${d.note}</div>` +
+    d.heroes.map(h=>{
+      const build = Object.entries(h.grade_counts||{}).map(([g,n])=>`${n}× ${g}`).join(" · ") || "no gear equipped";
+      const rows = h.slots.map(s=>{
+        const gap = s.grade_gap==null ? "" : (s.grade_gap>0
+          ? `<span class="neg">↑ target ${s.target_grade} (+${s.grade_gap})</span>`
+          : `<span class="pos">meets target</span>`);
+        return `<tr><td>${s.gear||"?"}</td><td>${s.name}</td><td>${s.grade}</td><td style="text-align:left">${gap}</td></tr>`;
+      }).join("");
+      const weak = h.weakest_slot ? ` — weakest: <span class="neg">${h.weakest_slot.gear} (${h.weakest_slot.grade}→${h.weakest_slot.target_grade})</span>` : "";
+      return `<div class="panel"><h3>${h.name} · lvl ${h.level} <span class="prov">(${h.equipped_count} slots)</span>${weak}</h3>
+        <div class="prov" style="margin:-6px 0 10px">My build: ${build}</div>` +
+        (h.slots.length ? `<table><thead><tr><th>slot</th><th>item</th><th>grade</th><th>vs target</th></tr></thead>
+        <tbody>${rows}</tbody></table>` : ``) + `</div>`;
+    }).join("");
+}
+async function loadAdvisor(){ renderAdvisor(await (await fetch("/api/advisor")).json()); }
+async function advPost(url){ renderAdvisor(await (await fetch(url,{method:"POST"})).json()); }
+$("#advFetch").onclick = loadAdvisor;
+$("#advSetTarget").onclick = ()=>advPost("/api/advisor/targets/from-current");
+$("#advReset").onclick = ()=>advPost("/api/advisor/targets/reset");
+
+// ---- LIVE ----
+let goldChart, expChart;
+function lineChart(ctx, label, color){
+  return new Chart(ctx, {type:"line",
+    data:{labels:[],datasets:[{label,data:[],borderColor:color,tension:.25,
+      pointRadius:0,borderWidth:2}]},
+    options:{animation:false,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#8b95a7",maxTicksLimit:8}},
+              y:{ticks:{color:"#8b95a7"}}}}});
+}
+async function refreshLive(){
+  try{
+    const st = await (await fetch("/api/status")).json();
+    $("#status").textContent = st.save_exists
+      ? `live · ${st.snapshots} snapshots · ${st.password_resolved?"decrypted":"resolving…"}`
+      : "save not found";
+    const {snapshot:s, rates:r} = await (await fetch("/api/live")).json();
+    if(!s){ return; }
+    const heroes = s.heroes.map(h=>`${h.name||h.heroKey}: ${h.level}`).join("  ·  ");
+    $("#liveCards").innerHTML = card("Gold", fmt(s.gold)) +
+      card("Gold / hr", fmt(r.gold_per_hr)) +
+      card("EXP / hr", fmt(r.exp_per_hr)) +
+      card("Items / hr", r.items_per_hr ?? "—") +
+      card("Max stage", `<span style="font-size:14px">${s.max_stage_label||fmt(s.max_completed_stage)}</span>`) +
+      card("Now farming", `<span style="font-size:14px">${s.current_stage_label||fmt(s.current_stage_key)}</span>`) +
+      card("Unopened chests", s.boxes.total) +
+      card("Heroes (name: lvl)", `<span style="font-size:13px">${heroes}</span>`);
+    const h = await (await fetch("/api/history?limit=720")).json();
+    const labels = h.series.map(p=>new Date(p.t*1000).toLocaleTimeString());
+    updateLine(goldChart, labels, h.series.map(p=>p.gold));
+    updateLine(expChart,  labels, h.series.map(p=>p.exp));
+  }catch(e){ $("#status").textContent = "error: "+e.message; }
+}
+function updateLine(c,labels,data){ c.data.labels=labels; c.data.datasets[0].data=data; c.update(); }
+function card(k,v){ return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
+
+// ---- DROP TEST ----
+async function refreshDrops(){
+  const {events} = await (await fetch("/api/events?limit=200")).json();
+  let chests=0, goldUp=0;
+  const rows = events.slice().reverse().map(e=>{
+    if(e.box_delta>0) chests+=e.box_delta;
+    if(e.gold_delta>0) goldUp+=e.gold_delta;
+    const counters = Object.entries(e.aggregate_deltas).slice(0,4)
+      .map(([k,v])=>`${k}:${v>0?"+":""}${v}`).join(" ");
+    const g = e.gold_delta, cls = g>0?"pos":g<0?"neg":"";
+    return `<tr><td>${new Date(e.t_cur*1000).toLocaleTimeString()}</td>
+      <td class="${cls}">${g>0?"+":""}${fmt(g)}</td>
+      <td>${e.items_gained.length||""}</td>
+      <td>${e.box_delta>0?"+"+e.box_delta:(e.box_delta||"")}</td>
+      <td style="text-align:left;font-size:11px;color:#8b95a7">${counters}</td></tr>`;
+  }).join("");
+  $("#dropCards").innerHTML = card("Change events", events.length) +
+    card("Chests gained (obs.)", chests) +
+    card("Gold gained (obs.)", fmt(goldUp));
+  $("#eventTable tbody").innerHTML = rows || `<tr><td colspan="5" style="color:#8b95a7">
+    No change events yet — play a round and gains will appear here within ~5s.</td></tr>`;
+}
+
+// ---- SIMULATOR ----
+let simChart;
+async function runSim(){
+  const q = new URLSearchParams({
+    drop_interval:$("#p_interval").value, drop_window:$("#p_window").value,
+    base_catch:$("#p_catch").value, clear_jitter:$("#p_jitter").value});
+  const d = await (await fetch("/api/simulate?"+q)).json();
+  const datasets = d.series.map((s,i)=>({
+    label:(s.label?s.label:s.rate+"%"),data:s.points,
+    borderColor:s.yours?"#57d9a3":RATE_COLORS[i%RATE_COLORS.length],
+    tension:.2,pointRadius:0,
+    borderWidth:s.yours?4:2, borderDash:s.yours?[]:[4,3]}));
+  if(simChart) simChart.destroy();
+  simChart = new Chart($("#simChart"), {type:"line",
+    data:{labels:d.clear_times.map(x=>x+"s"),datasets},
+    options:{animation:false,
+      plugins:{legend:{labels:{color:"#e6e9ef"}},
+        title:{display:true,text:d.uses_stats?"Average Drops vs Clear Time — your character (solid) vs reference (dashed)":"Average Drops vs Clear Time",color:"#8b95a7"}},
+      scales:{x:{title:{display:true,text:"Clear Time (sec)",color:"#8b95a7"},ticks:{color:"#8b95a7"}},
+              y:{title:{display:true,text:"Average Drops",color:"#8b95a7"},ticks:{color:"#8b95a7"}}}}});
+  const ctx = d.stats_context||{};
+  const ctxLine = Object.keys(ctx).length ? (
+    "Your Stat List context (does not change drop frequency — interval-gated): " +
+    [ctx.autoopen_normal_s!=null?`auto-open normal −${ctx.autoopen_normal_s}s`:null,
+     ctx.autoopen_stageboss_s!=null?`stage-boss −${ctx.autoopen_stageboss_s}s`:null,
+     ctx.autoopen_act_s!=null?`act-boss −${ctx.autoopen_act_s}s`:null,
+     ctx.common_chest_capacity!=null?`common cap +${ctx.common_chest_capacity}`:null,
+     ctx.stageboss_chest_capacity!=null?`stage-boss cap +${ctx.stageboss_chest_capacity}`:null,
+     ctx.offline_gold_pct!=null?`offline gold +${ctx.offline_gold_pct}%`:null
+    ].filter(Boolean).join(" · ")) : "Fill MY STATS to overlay your character's drop-chance bands.";
+  $("#simContext").innerHTML = ctxLine;
+  const head = `<tr><th>sec</th>${d.rates.map(r=>`<th>${r}</th>`).join("")}</tr>`;
+  const body = d.table.map(row=>`<tr><td>${row.clear_time}</td>${
+    d.rates.map(r=>`<td>${row[String(parseInt(r))]}</td>`).join("")}</tr>`).join("");
+  $("#simTable thead").innerHTML = head; $("#simTable tbody").innerHTML = body;
+}
+$("#runSim").onclick = runSim;
+
+// ---- boot ----
+goldChart = lineChart($("#goldChart"),"Gold","#ffb454");
+expChart  = lineChart($("#expChart"),"EXP","#57d9a3");
+refreshLive(); refreshDrops();
+setInterval(()=>{ refreshLive(); refreshDrops(); }, 5000);
+</script>
+</body>
+</html>
